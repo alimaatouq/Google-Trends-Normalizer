@@ -70,6 +70,8 @@ if uploaded_files:
             for col in norm_df.columns:
                 if col not in ['date', 'scaling_factor']: # Exclude 'date' and the 'scaling_factor' column itself
                     # Multiply each value by its corresponding row's scaling_factor
+                    # Fill NaNs in 'scaling_factor' with 0 before multiplication if that's desired behavior
+                    # Otherwise, rows with NaN scaling_factor will result in NaN after multiplication
                     norm_df[col] = norm_df[col] * norm_df['scaling_factor']
 
             # Drop the scaling_factor column before appending
@@ -82,6 +84,12 @@ if uploaded_files:
         final_df = final_df.loc[:,~final_df.columns.duplicated()].copy()
         final_df.reset_index(inplace=True)
 
+        # --- CODE FOR ROUNDING NUMBERS ---
+        for col in final_df.columns:
+            if col != 'date' and pd.api.types.is_numeric_dtype(final_df[col]):
+                final_df[col] = final_df[col].round().astype(int)
+        # --- END CODE ---
+
         st.subheader("📈 Normalized Trends Line Chart")
         selected_keywords = st.multiselect("Select keywords to plot", final_df.columns[1:], default=final_df.columns[1:3])
         if selected_keywords:
@@ -90,5 +98,10 @@ if uploaded_files:
         # Download as Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            final_df.to_excel(writer, index=False, sheet_name='Normalized Trends')
+            # --- CODE FOR SHORT DATE FORMAT IN EXCEL ---
+            # Create a copy to format date as string for Excel export only
+            excel_df = final_df.copy()
+            excel_df['date'] = excel_df['date'].dt.strftime('%Y-%m-%d')
+            # --- END CODE ---
+            excel_df.to_excel(writer, index=False, sheet_name='Normalized Trends')
         st.download_button("📥 Download Normalized Excel File", data=output.getvalue(), file_name="normalized_trends.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
