@@ -101,7 +101,7 @@ if uploaded_files:
                 on='date', 
                 suffixes=('_batch1', '_batch2'))
             comparison_df['ratio'] = comparison_df[f'{anchor_keyword}_batch2'] / comparison_df[f'{anchor_keyword}_batch1']
-            comparison_df.to_excel(writer, sheet_name='Ratio Calculations', index=False))
+            comparison_df.to_excel(writer, sheet_name='Ratio Calculations', index=False)
             
         st.download_button(
             "📥 Download Normalized Excel File",
