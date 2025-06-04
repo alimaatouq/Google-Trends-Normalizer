@@ -42,19 +42,33 @@ if uploaded_files:
         normalized_dfs = []
 
         for i, df in enumerate(batch_dfs):
-            anchor_col = df[["date", anchor_keyword]].copy()
-            df_merged = df.merge(anchor_reference, on="date")
-            df_merged['scaling_factor'] = df_merged['anchor_ref'] / df_merged[anchor_keyword]
-
-            # Use median scaling factor to minimize noise
-            ratio = df_merged['scaling_factor'].median()
-
-            # Normalize all columns except date
+            # Merge with anchor_reference to get scaling factors for each date
+            df_merged = df.merge(anchor_reference, on="date", how='left') # Use left join to keep all dates from current df
+            
+            # Calculate scaling_factor for each row/date
+            # Handle cases where anchor_keyword might be 0 in the current batch to avoid division by zero
+            df_merged['scaling_factor'] = np.where(
+                df_merged[anchor_keyword] != 0,
+                df_merged['anchor_ref'] / df_merged[anchor_keyword],
+                np.nan # Or 0, or some other handling for division by zero if appropriate for your data
+            )
+            
+            # Create a copy to store normalized values
             norm_df = df.copy()
-            for col in norm_df.columns:
-                if col != 'date':
-                    norm_df[col] = norm_df[col] * ratio
 
+            # Apply the unique scaling factor for each row/date
+            # Merge the scaling factors back to the original df for row-wise application
+            norm_df = norm_df.merge(df_merged[['date', 'scaling_factor']], on='date', how='left')
+
+            for col in norm_df.columns:
+                if col not in ['date', 'scaling_factor']: # Exclude 'date' and the 'scaling_factor' column itself
+                    # Multiply each value by its corresponding row's scaling_factor
+                    # Use .fillna(0) or another strategy for NaNs in scaling_factor if needed
+                    norm_df[col] = norm_df[col] * norm_df['scaling_factor']
+
+            # Drop the scaling_factor column before appending
+            norm_df = norm_df.drop(columns=['scaling_factor'])
+            
             normalized_dfs.append(norm_df.set_index("date"))
 
         # Combine normalized data
