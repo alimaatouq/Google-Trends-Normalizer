@@ -47,7 +47,7 @@ if uploaded_files:
             df_merged['scaling_factor'] = df_merged['anchor_ref'] / df_merged[anchor_keyword]
 
             # Use median scaling factor to minimize noise
-            ratio = df_merged['scaling_factor'].median()
+            ratio = df_merged['scaling_factor'] #.median()
 
             # Normalize all columns except date
             norm_df = df.copy()
