@@ -99,7 +99,7 @@ if uploaded_files:
             comparison_df = comparison_df.merge(
                 batch_dfs[1][['date', anchor_keyword]], 
                 on='date', 
-                suffixes=('_batch1', '_batch2'),
+                suffixes=('_batch1', '_batch2'))
             comparison_df['ratio'] = comparison_df[f'{anchor_keyword}_batch2'] / comparison_df[f'{anchor_keyword}_batch1']
             comparison_df.to_excel(writer, sheet_name='Ratio Calculations', index=False))
             
