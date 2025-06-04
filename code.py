@@ -18,15 +18,42 @@ if uploaded_files:
     anchor_keywords = []
 
     for file in uploaded_files:
+        # Read the CSV, skipping the first row as before
         df = pd.read_csv(file, skiprows=1)
         df.columns.values[0] = 'date'
-        df['date'] = pd.to_datetime(df['date'])
 
+        # --- IMPORTANT CHANGE HERE ---
+        # Try a specific format. You might need to change this based on your actual data.
+        # Common Google Trends formats:
+        # '%Y-%m-%d' for 'YYYY-MM-DD'
+        # '%m/%d/%Y' for 'MM/DD/YYYY'
+        # '%m/%d/%y' for 'MM/DD/YY'
+        # If your data is 'Month DD, YYYY' (e.g., 'January 15, 2023'), use '%B %d, %Y'
+        
+        try:
+            df['date'] = pd.to_datetime(df['date'], format='%Y-%m-%d') # Try YYYY-MM-DD first
+        except ValueError:
+            try:
+                df['date'] = pd.to_datetime(df['date'], format='%m/%d/%Y') # Then try MM/DD/YYYY
+            except ValueError:
+                try:
+                    df['date'] = pd.to_datetime(df['date'], format='%m/%d/%y') # Then try MM/DD/YY
+                except ValueError:
+                    # If all specific formats fail, let pandas try to infer, but errors might still occur
+                    st.warning(f"Could not parse dates with specific formats for {file.name}. Attempting generic parse, but errors may occur.")
+                    df['date'] = pd.to_datetime(df['date'], errors='coerce') # 'coerce' will turn unparseable dates into NaT (Not a Time)
+
+        # Drop rows where date couldn't be parsed (NaT) if 'coerce' was used
+        df.dropna(subset=['date'], inplace=True)
+        # --- END IMPORTANT CHANGE ---
+
+        # The rest of your code remains the same
         # Identify anchor keyword (appears in all files)
         keywords = set(df.columns[1:])
         anchor_keywords.append(keywords)
         batch_dfs.append(df)
 
+    # ... (rest of your code, including anchor detection and normalization logic)
     # Auto-detect common anchor keyword
     common_keywords = set.intersection(*anchor_keywords)
     if len(common_keywords) == 0:
@@ -43,27 +70,26 @@ if uploaded_files:
 
         for i, df in enumerate(batch_dfs):
             # Merge with anchor_reference to get scaling factors for each date
-            df_merged = df.merge(anchor_reference, on="date", how='left') # Use left join to keep all dates from current df
+            df_merged = df.merge(anchor_reference, on="date", how='left')
             
             # Calculate scaling_factor for each row/date
-            # Handle cases where anchor_keyword might be 0 in the current batch to avoid division by zero
             df_merged['scaling_factor'] = np.where(
                 df_merged[anchor_keyword] != 0,
                 df_merged['anchor_ref'] / df_merged[anchor_keyword],
-                np.nan # Or 0, or some other handling for division by zero if appropriate for your data
+                np.nan # Handle division by zero: set to NaN
             )
             
             # Create a copy to store normalized values
             norm_df = df.copy()
 
             # Apply the unique scaling factor for each row/date
-            # Merge the scaling factors back to the original df for row-wise application
             norm_df = norm_df.merge(df_merged[['date', 'scaling_factor']], on='date', how='left')
 
             for col in norm_df.columns:
-                if col not in ['date', 'scaling_factor']: # Exclude 'date' and the 'scaling_factor' column itself
+                if col not in ['date', 'scaling_factor']:
                     # Multiply each value by its corresponding row's scaling_factor
-                    # Use .fillna(0) or another strategy for NaNs in scaling_factor if needed
+                    # Fill NaNs in 'scaling_factor' with 0 before multiplication if that's desired behavior
+                    # Otherwise, rows with NaN scaling_factor will result in NaN after multiplication
                     norm_df[col] = norm_df[col] * norm_df['scaling_factor']
 
             # Drop the scaling_factor column before appending
