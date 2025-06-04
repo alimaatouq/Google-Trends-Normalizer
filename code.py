@@ -11,101 +11,104 @@ Upload multiple CSV files (each from a separate Google Trends batch).
 Each file must contain a common keyword to normalize across batches.
 """)
 
-uploaded_files = st.file_uploader("Upload Google Trends CSV Batches", type="csv", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Google Trends CSV Batches", 
+                                type="csv", 
+                                accept_multiple_files=True)
 
-if uploaded_files:
-    batch_dfs = []
-    anchor_keywords = []
-
-    for file in uploaded_files:
-        # Read CSV, handling Google Trends header format
-        df = pd.read_csv(file, skiprows=1)
+if uploaded_files and len(uploaded_files) >= 2:
+    try:
+        # Read and process all files
+        batch_dfs = []
+        anchor_keywords = []
         
-        # Clean column names and set date
-        df.columns.values[0] = 'date'
-        df['date'] = pd.to_datetime(df['date'], dayfirst=True)  # Added dayfirst for DD-MM-YY format
-        
-        # Store keywords for anchor detection
-        keywords = set(df.columns[1:])
-        anchor_keywords.append(keywords)
-        batch_dfs.append(df)
+        for file in uploaded_files:
+            df = pd.read_csv(file, skiprows=1)
+            df.columns.values[0] = 'date'
+            df['date'] = pd.to_datetime(df['date'], dayfirst=True)
+            keywords = set(df.columns[1:])
+            anchor_keywords.append(keywords)
+            batch_dfs.append(df)
 
-    # Auto-detect common anchor keyword
-    common_keywords = set.intersection(*anchor_keywords)
-    if len(common_keywords) == 0:
-        st.error("No common keyword found across all batches.")
-    else:
-        # Let user select anchor if multiple options exist
+        # Find common anchor keywords
+        common_keywords = set.intersection(*anchor_keywords)
+        
+        if not common_keywords:
+            st.error("No common keyword found across all batches.")
+            st.stop()
+            
+        # Let user select anchor if multiple exist
         if len(common_keywords) > 1:
-            anchor_keyword = st.selectbox("Select anchor keyword for normalization:", 
+            anchor_keyword = st.selectbox("Select anchor keyword:", 
                                         list(common_keywords))
         else:
             anchor_keyword = list(common_keywords)[0]
-            st.success(f"Auto-detected anchor keyword: **{anchor_keyword}**")
+            st.success(f"Using anchor keyword: {anchor_keyword}")
 
-        # Use first batch as reference
-        reference_batch = batch_dfs[0]
-        anchor_reference = reference_batch[["date", anchor_keyword]].copy()
-        anchor_reference.rename(columns={anchor_keyword: "anchor_ref"}, inplace=True)
-
-        normalized_dfs = [reference_batch]  # First batch is our reference
-
-        for i, df in enumerate(batch_dfs[1:], start=1):  # Start from second batch
-            # Merge with reference anchor values
-            df_merged = df.merge(anchor_reference, on="date")
-            
-            # Calculate daily ratios (like your Excel)
-            df_merged['scaling_factor'] = df_merged[anchor_keyword] / df_merged['anchor_ref']
-            
-            # Normalize all columns (divide by ratio - matches Excel approach)
-            norm_df = df.copy()
-            for col in norm_df.columns:
-                if col not in ['date', anchor_keyword]:
-                    norm_df[col] = np.where(
-                        df_merged['scaling_factor'] != 0,
-                        df[col] / df_merged['scaling_factor'],
-                        df[col]
-                    )
-            
-            # Keep anchor column from reference batch for consistency
-            norm_df[anchor_keyword] = anchor_reference['anchor_ref']
-            normalized_dfs.append(norm_df.set_index("date"))
-
-        # Combine normalized data
-        final_df = pd.concat(normalized_dfs, axis=1)
+        # Normalization process
+        reference_df = batch_dfs[0][['date', anchor_keyword]].copy()
+        reference_df.columns = ['date', 'reference_value']
         
-        # Remove duplicate columns (keeping first occurrence)
-        final_df = final_df.loc[:,~final_df.columns.duplicated()].copy()
+        normalized_dfs = [batch_dfs[0]]  # Keep first batch as-is
+        
+        for i in range(1, len(batch_dfs)):
+            current_df = batch_dfs[i].copy()
+            
+            # Merge with reference values
+            merged_df = pd.merge(current_df, reference_df, on='date')
+            
+            # Calculate scaling factors
+            merged_df['scaling_factor'] = merged_df[anchor_keyword] / merged_df['reference_value']
+            
+            # Normalize all non-date, non-anchor columns
+            for col in current_df.columns:
+                if col not in ['date', anchor_keyword]:
+                    current_df[col] = current_df[col] / merged_df['scaling_factor']
+            
+            # Keep anchor column consistent with reference
+            current_df[anchor_keyword] = reference_df['reference_value']
+            normalized_dfs.append(current_df)
+
+        # Combine all normalized data
+        final_df = pd.concat([df.set_index('date') for df in normalized_dfs], axis=1)
+        final_df = final_df.loc[:,~final_df.columns.duplicated()]
         final_df.reset_index(inplace=True)
 
         # Display results
-        st.subheader("📈 Normalized Trends")
-        st.dataframe(final_df.style.format("{:.1f}"), height=300)
+        st.subheader("Normalized Data")
+        st.dataframe(final_df)
 
-        st.subheader("📈 Normalized Trends Line Chart")
-        selected_keywords = st.multiselect("Select keywords to plot", 
-                                         final_df.columns[1:], 
-                                         default=final_df.columns[1:3])
-        if selected_keywords:
-            st.line_chart(final_df.set_index("date")[selected_keywords])
+        # Visualization
+        st.subheader("Trend Visualization")
+        cols_to_plot = st.multiselect("Select columns to plot",
+                                    final_df.columns[1:],
+                                    default=final_df.columns[1:3])
+        
+        if cols_to_plot:
+            st.line_chart(final_df.set_index('date')[cols_to_plot])
 
-        # Download as Excel
+        # Excel Download
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            final_df.to_excel(writer, index=False, sheet_name='Normalized Trends')
+            final_df.to_excel(writer, sheet_name='Normalized Data', index=False)
             
-            # Add ratio calculations sheet like your example
-            comparison_df = batch_dfs[0][['date', anchor_keyword]].copy()
-            comparison_df = comparison_df.merge(
-                batch_dfs[1][['date', anchor_keyword]], 
-                on='date', 
-                suffixes=('_batch1', '_batch2'))
-            comparison_df['ratio'] = comparison_df[f'{anchor_keyword}_batch2'] / comparison_df[f'{anchor_keyword}_batch1']
-            comparison_df.to_excel(writer, sheet_name='Ratio Calculations', index=False)
+            # Add ratio calculations
+            ratio_df = pd.merge(
+                batch_dfs[0][['date', anchor_keyword]],
+                batch_dfs[1][['date', anchor_keyword]],
+                on='date',
+                suffixes=('_batch1', '_batch2')
+            )
+            ratio_df['ratio'] = ratio_df[f'{anchor_keyword}_batch2'] / ratio_df[f'{anchor_keyword}_batch1']
+            ratio_df.to_excel(writer, sheet_name='Scaling Factors', index=False)
             
         st.download_button(
-            "📥 Download Normalized Excel File",
+            "Download Normalized Data",
             data=output.getvalue(),
             file_name="normalized_trends.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+elif uploaded_files and len(uploaded_files) < 2:
+    st.warning("Please upload at least 2 files for normalization")
